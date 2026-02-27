@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# note-list — print all notes as fzf-ready lines, sorted by modification time
+# Output format (tab-separated): "display  <meta>\tfilepath"
+# Used by note-open for both the initial list and the ctrl-d reload.
+
+NOTES_DIR="${HOME}/Notes"
+
+find "${NOTES_DIR}" -maxdepth 1 -name "*.md" -not -name ".*" -printf "%T@\t%p\n" \
+  | sort -rn \
+  | while IFS=$'\t' read -r _mtime filepath; do
+      h1="$(grep -m1 '^# ' "${filepath}" 2>/dev/null | sed 's/^# //' | xargs)"
+      fm_title="$(grep -m1 '^title:' "${filepath}" 2>/dev/null | sed 's/^title:[[:space:]]*//' | xargs)"
+      tags="$(grep -m1 '^tags:' "${filepath}" 2>/dev/null | sed 's/^tags:[[:space:]]*//' | xargs)"
+      updated="$(grep -m1 '^updated:' "${filepath}" 2>/dev/null | sed 's/^updated:[[:space:]]*//' | xargs)"
+
+      display="${h1:-${fm_title:-$(basename "${filepath}" .md)}}"
+      meta=""
+      [[ -n "${updated}" ]] && meta="${updated}"
+      [[ -n "${tags}" && "${tags}" != "[]" ]] && meta="${meta}  ${tags}"
+
+      printf "%-45s  \033[2m%s\033[0m\t%s\n" "${display}" "${meta}" "${filepath}"
+    done

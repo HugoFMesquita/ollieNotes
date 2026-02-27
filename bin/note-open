@@ -7,27 +7,7 @@ MICRO_CONFIG_HOME="${SCRIPT_DIR}/../config/micro"
 
 mkdir -p "${NOTES_DIR}"
 
-# Build list: "display_title\tfilepath" sorted by modification time (newest first)
-get_notes() {
-  find "${NOTES_DIR}" -maxdepth 1 -name "*.md" -not -name ".*" -printf "%T@\t%p\n" \
-    | sort -rn \
-    | while IFS=$'\t' read -r _mtime filepath; do
-        # Try H1 first, then frontmatter title, then filename
-        h1="$(grep -m1 '^# ' "${filepath}" 2>/dev/null | sed 's/^# //' | xargs)"
-        fm_title="$(grep -m1 '^title:' "${filepath}" 2>/dev/null | sed 's/^title:[[:space:]]*//' | xargs)"
-        tags="$(grep -m1 '^tags:' "${filepath}" 2>/dev/null | sed 's/^tags:[[:space:]]*//' | xargs)"
-        updated="$(grep -m1 '^updated:' "${filepath}" 2>/dev/null | sed 's/^updated:[[:space:]]*//' | xargs)"
-
-        display="${h1:-${fm_title:-$(basename "${filepath}" .md)}}"
-        meta=""
-        [[ -n "${updated}" ]] && meta="${updated}"
-        [[ -n "${tags}" && "${tags}" != "[]" ]] && meta="${meta}  ${tags}"
-
-        printf "%s\t%s\t%s\n" "${display}" "${meta}" "${filepath}"
-      done
-}
-
-NOTES="$(get_notes)"
+NOTES="$("${SCRIPT_DIR}/note-list")"
 
 if [[ -z "${NOTES}" ]]; then
   echo "No notes found in ${NOTES_DIR}"
@@ -35,12 +15,8 @@ if [[ -z "${NOTES}" ]]; then
   exit 0
 fi
 
-# The first entry (newest) is the default selection
-LAST_NOTE="$(echo "${NOTES}" | head -1 | cut -f1)"
-
-# fzf display: show title + meta, keep filepath as hidden field
+# fzf display: output from note-list is already formatted; filepath is field 2 (tab-delimited)
 SELECTED="$(echo "${NOTES}" \
-  | awk -F'\t' '{printf "%-45s  \033[2m%s\033[0m\t%s\n", $1, $2, $3}' \
   | fzf \
       --ansi \
       --layout=reverse \
@@ -49,18 +25,17 @@ SELECTED="$(echo "${NOTES}" \
       --prompt="  " \
       --pointer="▶" \
       --query="" \
-      --select-1 \
       --no-multi \
-      --with-nth=1,2 \
+      --with-nth=1 \
       --delimiter='\t' \
-      --preview='bat --style=plain --color=always --language=md {3}' \
+      --preview='bat --style=plain --color=always --language=md {2}' \
       --preview-window='right:55%:wrap' \
-      --bind "ctrl-d:execute(${SCRIPT_DIR}/note-delete {3})+reload(bash -c \"$(declare -f get_notes); get_notes | awk -F$'\\t' '{printf \\\"%-45s  \\\\033[2m%s\\\\033[0m\\\\t%s\\\\n\\\", \$1, \$2, \$3}'\")" \
+      --bind "ctrl-d:execute(${SCRIPT_DIR}/note-delete {2})+reload(${SCRIPT_DIR}/note-list)" \
       --header="  enter:open  ctrl-d:delete  esc:quit" \
 )"
 
-# Extract filepath (second tab-field)
-FILEPATH="$(echo "${SELECTED}" | awk -F'\t' '{print $3}' | xargs)"
+# Extract filepath (second tab-field, after the formatted display)
+FILEPATH="$(echo "${SELECTED}" | awk -F'\t' '{print $2}' | xargs)"
 
 [[ -z "${FILEPATH}" ]] && exit 0
 
