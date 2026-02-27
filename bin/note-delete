@@ -2,10 +2,14 @@
 # note-delete — confirm and delete a note file
 # Usage: note-delete <filepath>
 
+SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 FILEPATH="$1"
 [[ -z "${FILEPATH}" ]] && exit 1
 
 read -p "  Delete? [y/N] " confirm
 if [[ "${confirm}" == [yY] ]]; then
   rm -f "${FILEPATH}"
+  # Sync deletion to GitHub — no filepath arg triggers a general sweep (git add -A)
+  # which picks up the removal. setsid detaches from the caller's terminal session.
+  (setsid "${SCRIPT_DIR}/note-sync" </dev/null &)
 fi
