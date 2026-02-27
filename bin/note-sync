@@ -1,0 +1,268 @@
+#!/usr/bin/env bash
+# note-sync — background git sync for a single note (or a general sweep)
+#
+# Usage:
+#   note-sync [<filepath>]
+#
+# If <filepath> is given, stage + commit that file, then push.
+# If omitted, do a general "sync: date" commit of any unstaged changes, then push.
+#
+# Design constraints:
+#   - NO set -e  — all failures handled explicitly so the script never crashes silently
+#   - Safe to call with & from note / note-open; uses a lockfile to serialise runs
+#   - All output goes to ~/.notes-sync.log (trimmed to 500 lines)
+#   - Desktop notifications via notify-send (if available)
+#   - Failed pushes are queued in ~/.notes-sync-queue and retried on next invocation
+#   - Amend logic: amend last commit if it touched the same file within 5 minutes;
+#     when amending, use --force-with-lease instead of pull+push to avoid conflicts
+
+# ── paths ─────────────────────────────────────────────────────────────────────
+NOTES_DIR="${HOME}/Notes"
+LOCK_FILE="${HOME}/.notes-sync.lock"
+LOG_FILE="${HOME}/.notes-sync.log"
+QUEUE_FILE="${HOME}/.notes-sync-queue"
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+log() {
+  local ts
+  ts="$(date +'%Y-%m-%d %H:%M:%S')"
+  printf '[%s] %s\n' "${ts}" "$*" >> "${LOG_FILE}"
+  # keep log bounded — use mktemp to avoid predictable /tmp symlink attacks
+  if [[ -f "${LOG_FILE}" ]]; then
+    local tmp
+    tmp="$(mktemp)" || return 0   # if mktemp fails, skip trimming (non-fatal)
+    if tail -n 500 "${LOG_FILE}" > "${tmp}"; then
+      mv "${tmp}" "${LOG_FILE}"
+    else
+      rm -f "${tmp}"              # clean up on tail/mv failure
+    fi
+  fi
+}
+
+notify() {
+  local summary="$1" body="${2:-}"
+  if command -v notify-send &>/dev/null; then
+    notify-send --app-name="Notes" --icon=emblem-documents --expire-time=4000 \
+      "${summary}" "${body}" 2>/dev/null
+  fi
+}
+
+# ── guard: ~/Notes must be a git repo ─────────────────────────────────────────
+if ! git -C "${NOTES_DIR}" rev-parse --git-dir &>/dev/null; then
+  log "ERROR: ${NOTES_DIR} is not a git repository. Run note-setup-github first."
+  notify "Notes sync error" "${NOTES_DIR} is not a git repo."
+  exit 1
+fi
+
+# ── redirect all subsequent stdout/stderr to log ──────────────────────────────
+exec >> "${LOG_FILE}" 2>&1
+
+# ── lockfile: prevent concurrent syncs ────────────────────────────────────────
+if [[ -f "${LOCK_FILE}" ]]; then
+  existing_pid="$(cat "${LOCK_FILE}" 2>/dev/null)"
+  if [[ -n "${existing_pid}" ]] && kill -0 "${existing_pid}" 2>/dev/null; then
+    log "INFO: sync already running (pid ${existing_pid}), exiting."
+    exit 0
+  else
+    log "INFO: stale lockfile (pid ${existing_pid}), removing."
+    rm -f "${LOCK_FILE}"
+  fi
+fi
+
+echo "$$" > "${LOCK_FILE}"
+
+# ── cleanup on exit ───────────────────────────────────────────────────────────
+trap 'rm -f "${LOCK_FILE}"; log "INFO: sync session ended (pid $$)"' EXIT
+
+log "INFO: sync started (pid $$)"
+
+FILEPATH="${1:-}"   # may be empty
+
+# ── amend window constant ─────────────────────────────────────────────────────
+AMEND_WINDOW_SECS=300   # 5 minutes
+
+# DID_AMEND tracks whether this run performed an --amend so the push step knows
+# to use --force-with-lease instead of pull+push.
+DID_AMEND=0
+
+# ── helper: should we amend the last commit for this file? ────────────────────
+# Returns 0 (true) if ALL of the following hold:
+#   1. The most-recent commit that touched <filepath> is within AMEND_WINDOW_SECS.
+#   2. That commit IS HEAD (prevents amending a commit that belongs to a different
+#      note — e.g. note-A saved → note-B saved → note-A saved again within window).
+should_amend() {
+  local filepath="$1"
+
+  # Hash + timestamp of the most-recent commit that touched this specific file
+  local file_hash last_commit_ts
+  file_hash="$(git -C "${NOTES_DIR}" log -1 --format='%H' -- "${filepath}" 2>/dev/null)"
+  last_commit_ts="$(git -C "${NOTES_DIR}" log -1 --format='%ct' -- "${filepath}" 2>/dev/null)"
+
+  [[ -z "${file_hash}" || -z "${last_commit_ts}" ]] && return 1   # no prior commit for this file
+
+  # Hash of the absolute HEAD commit
+  local head_hash
+  head_hash="$(git -C "${NOTES_DIR}" log -1 --format='%H' HEAD 2>/dev/null)"
+
+  # Guard: only amend if HEAD IS the commit that touched this file.
+  # If HEAD points to a different commit (another note was saved after this one),
+  # --amend would silently rewrite that other note's commit instead.
+  if [[ "${head_hash}" != "${file_hash}" ]]; then
+    log "INFO: HEAD (${head_hash:0:7}) ≠ last commit for $(basename "${filepath}") (${file_hash:0:7}) — new commit (would amend wrong commit)."
+    return 1
+  fi
+
+  local now age
+  now="$(date +%s)"
+  age=$(( now - last_commit_ts ))
+
+  if (( age <= AMEND_WINDOW_SECS )); then
+    log "INFO: last commit for $(basename "${filepath}") was ${age}s ago (≤${AMEND_WINDOW_SECS}s) and is HEAD — will amend."
+    return 0
+  else
+    log "INFO: last commit for $(basename "${filepath}") was ${age}s ago — new commit."
+    return 1
+  fi
+}
+
+# ── helper: commit a specific file or a general sweep ─────────────────────────
+do_commit() {
+  local filepath="$1"   # may be empty
+
+  if [[ -n "${filepath}" && -f "${filepath}" ]]; then
+    # Stage just this file
+    if ! git -C "${NOTES_DIR}" add -- "${filepath}"; then
+      log "ERROR: git add failed for ${filepath}"
+      return 1
+    fi
+
+    # Check if there's actually something staged for this file
+    if git -C "${NOTES_DIR}" diff --cached --quiet -- "${filepath}"; then
+      log "INFO: no changes staged for ${filepath}, skipping commit."
+      return 0
+    fi
+
+    # Build commit message from H1 heading (or filename fallback)
+    local title
+    title="$(grep -m1 '^# ' "${filepath}" 2>/dev/null | sed 's/^# //' | xargs)"
+    local commit_msg
+    if [[ -n "${title}" ]]; then
+      commit_msg="note: ${title}"
+    else
+      commit_msg="note: $(basename "${filepath}" .md)"
+    fi
+
+    # Amend if last commit for this file was within the 5-minute window;
+    # otherwise create a fresh commit.
+    if should_amend "${filepath}"; then
+      log "INFO: amending last commit for ${filepath}"
+      if ! git -C "${NOTES_DIR}" commit --amend --no-edit; then
+        log "ERROR: git commit --amend failed for ${filepath}"
+        return 1
+      fi
+      DID_AMEND=1
+    else
+      log "INFO: new commit for ${filepath}: ${commit_msg}"
+      if ! git -C "${NOTES_DIR}" commit -m "${commit_msg}"; then
+        log "ERROR: git commit failed for ${filepath}"
+        return 1
+      fi
+    fi
+
+  else
+    # General sweep: stage everything unstaged
+    if ! git -C "${NOTES_DIR}" add -A; then
+      log "ERROR: git add -A failed"
+      return 1
+    fi
+
+    # Nothing to commit?
+    if git -C "${NOTES_DIR}" diff --cached --quiet; then
+      log "INFO: no changes to commit (general sweep)."
+      return 0
+    fi
+
+    local sweep_msg="sync: $(date +'%Y-%m-%d')"
+    log "INFO: general commit: ${sweep_msg}"
+    if ! git -C "${NOTES_DIR}" commit -m "${sweep_msg}"; then
+      log "ERROR: git commit failed (general sweep)"
+      return 1
+    fi
+  fi
+
+  return 0
+}
+
+# ── retry queue: push anything that previously failed ─────────────────────────
+if [[ -f "${QUEUE_FILE}" && -s "${QUEUE_FILE}" ]]; then
+  log "INFO: retrying queued pushes from ${QUEUE_FILE}"
+
+  CURRENT_BRANCH_Q="$(git -C "${NOTES_DIR}" branch --show-current 2>/dev/null || echo main)"
+
+  # Pull --rebase before retrying queued work
+  if ! git -C "${NOTES_DIR}" pull --rebase origin "${CURRENT_BRANCH_Q}" 2>&1; then
+    log "WARN: pull --rebase failed during queue retry; aborting rebase."
+    git -C "${NOTES_DIR}" rebase --abort 2>/dev/null
+    # Don't clear queue; we'll retry next time.
+    # Exit NOW — do_commit must not run on a rebase-aborted working tree.
+    exit 0
+  else
+    if git -C "${NOTES_DIR}" push 2>&1; then
+      log "INFO: queued pushes succeeded."
+      notify "Notes synced ✓" "Retried sync successful."
+      rm -f "${QUEUE_FILE}"
+    else
+      log "WARN: queued push retry failed again; keeping queue."
+      notify "Notes sync failed" "Push retry failed. Will try again later."
+      # Exit without attempting the new sync — avoid making divergence worse
+      exit 0
+    fi
+  fi
+fi
+
+# ── commit current file / sweep ───────────────────────────────────────────────
+if ! do_commit "${FILEPATH}"; then
+  log "ERROR: commit step failed; aborting sync."
+  notify "Notes sync error" "Commit failed. Check ~/.notes-sync.log."
+  exit 1
+fi
+
+CURRENT_BRANCH="$(git -C "${NOTES_DIR}" branch --show-current 2>/dev/null || echo main)"
+
+# ── push strategy depends on whether we amended ───────────────────────────────
+if (( DID_AMEND == 1 )); then
+  # After an amend the commit SHA changed; pull --rebase would create a conflict
+  # (the remote still has the original commit).  Use --force-with-lease instead:
+  # safe because it only pushes if the remote tip is exactly what we expect.
+  log "INFO: push --force-with-lease to origin/${CURRENT_BRANCH} (amend path)"
+  if ! git -C "${NOTES_DIR}" push --force-with-lease 2>&1; then
+    log "ERROR: push --force-with-lease failed; queuing for retry."
+    echo "${FILEPATH:-general}" >> "${QUEUE_FILE}"
+    notify "Notes sync failed" "Force-push failed. Will retry on next save."
+    exit 1
+  fi
+else
+  # Normal (non-amend) path: pull --rebase first to incorporate remote changes,
+  # then push.
+  log "INFO: pulling with --rebase on branch ${CURRENT_BRANCH}"
+  if ! git -C "${NOTES_DIR}" pull --rebase origin "${CURRENT_BRANCH}" 2>&1; then
+    log "ERROR: pull --rebase failed; aborting rebase."
+    git -C "${NOTES_DIR}" rebase --abort 2>/dev/null
+    notify "Notes sync error" "Pull --rebase failed. Check ~/.notes-sync.log."
+    echo "general" >> "${QUEUE_FILE}"
+    exit 1
+  fi
+
+  log "INFO: pushing to origin/${CURRENT_BRANCH}"
+  if ! git -C "${NOTES_DIR}" push 2>&1; then
+    log "ERROR: push failed; queuing for retry."
+    echo "${FILEPATH:-general}" >> "${QUEUE_FILE}"
+    notify "Notes sync failed" "Push failed. Will retry on next save."
+    exit 1
+  fi
+fi
+
+log "INFO: sync complete."
+notify "Notes synced ✓" "${FILEPATH:+$(basename "${FILEPATH}") • }pushed to GitHub."
+
+exit 0

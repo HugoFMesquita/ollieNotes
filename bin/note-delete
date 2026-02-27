@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# note-delete — confirm and delete a note file
+# Usage: note-delete <filepath>
+
+FILEPATH="$1"
+[[ -z "${FILEPATH}" ]] && exit 1
+
+read -p "  Delete? [y/N] " confirm
+if [[ "${confirm}" == [yY] ]]; then
+  rm -f "${FILEPATH}"
+fi

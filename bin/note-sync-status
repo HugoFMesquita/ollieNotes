@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# note-sync-status — print human-readable git sync status for ~/Notes
+# Exits 0 if everything is clean, 1 if there are unpushed commits or a non-empty queue.
+
+NOTES_DIR="${HOME}/Notes"
+QUEUE_FILE="${HOME}/.notes-sync-queue"
+LOG_FILE="${HOME}/.notes-sync.log"
+
+# ── Colour helpers ────────────────────────────────────────────────────────────
+RED='\033[0;31m'
+YELLOW='\033[0;33m'
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+DIM='\033[2m'
+RESET='\033[0m'
+
+ok()   { echo -e "  ${GREEN}✔${RESET}  $*"; }
+warn() { echo -e "  ${YELLOW}⚠${RESET}  $*"; }
+err()  { echo -e "  ${RED}✖${RESET}  $*"; }
+hdr()  { echo -e "\n${BOLD}${CYAN}$*${RESET}"; }
+
+# ── Track overall health ──────────────────────────────────────────────────────
+ISSUES=0
+
+# ─────────────────────────────────────────────────────────────────────────────
+hdr "── Notes Sync Status ───────────────────────────────────"
+
+# ── 1. Notes directory ────────────────────────────────────────────────────────
+hdr "Directory"
+if [[ -d "${NOTES_DIR}" ]]; then
+  NOTE_COUNT="$(find "${NOTES_DIR}" -maxdepth 1 -name "*.md" -not -name ".*" | wc -l | tr -d ' ')"
+  ok "Notes dir: ${NOTES_DIR}  (${NOTE_COUNT} notes)"
+else
+  err "Notes dir not found: ${NOTES_DIR}"
+  ISSUES=1
+fi
+
+# ── 2. Git repo check ─────────────────────────────────────────────────────────
+hdr "Git Repository"
+if ! git -C "${NOTES_DIR}" rev-parse --git-dir &>/dev/null; then
+  err "Not a git repository — run: note-setup-github"
+  ISSUES=1
+  # Nothing further to check
+  echo ""
+  # Jump straight to queue / log sections
+else
+  # 2a. Current branch
+  BRANCH="$(git -C "${NOTES_DIR}" branch --show-current 2>/dev/null)"
+  ok "Branch: ${BRANCH:-<detached>}"
+
+  # 2b. Remote configured?
+  REMOTE_URL="$(git -C "${NOTES_DIR}" remote get-url origin 2>/dev/null)"
+  if [[ -n "${REMOTE_URL}" ]]; then
+    ok "Remote: ${REMOTE_URL}"
+  else
+    warn "No remote 'origin' configured — run: note-setup-github"
+    ISSUES=1
+  fi
+
+  # 2c. Last commit
+  LAST_COMMIT="$(git -C "${NOTES_DIR}" log -1 --format="%h %s (%cr)" 2>/dev/null)"
+  if [[ -n "${LAST_COMMIT}" ]]; then
+    ok "Last commit: ${LAST_COMMIT}"
+  else
+    warn "No commits yet"
+  fi
+
+  # 2d. Working tree status
+  hdr "Working Tree"
+  DIRTY="$(git -C "${NOTES_DIR}" status --porcelain 2>/dev/null)"
+  if [[ -z "${DIRTY}" ]]; then
+    ok "Working tree clean"
+  else
+    DIRTY_COUNT="$(echo "${DIRTY}" | grep -c .)"
+    warn "${DIRTY_COUNT} uncommitted change(s):"
+    echo "${DIRTY}" | while IFS= read -r line; do
+      echo -e "       ${DIM}${line}${RESET}"
+    done
+    ISSUES=1
+  fi
+
+  # 2e. Unpushed commits
+  hdr "Unpushed Commits"
+  if git -C "${NOTES_DIR}" rev-parse origin/"${BRANCH}" &>/dev/null 2>&1; then
+    UNPUSHED="$(git -C "${NOTES_DIR}" log origin/"${BRANCH}"..HEAD --oneline 2>/dev/null)"
+    if [[ -z "${UNPUSHED}" ]]; then
+      ok "Up to date with origin/${BRANCH}"
+    else
+      UNPUSHED_COUNT="$(echo "${UNPUSHED}" | grep -c .)"
+      warn "${UNPUSHED_COUNT} unpushed commit(s):"
+      echo "${UNPUSHED}" | while IFS= read -r line; do
+        echo -e "       ${DIM}${line}${RESET}"
+      done
+      ISSUES=1
+    fi
+  else
+    warn "Remote branch origin/${BRANCH} not found — push pending"
+    ISSUES=1
+  fi
+fi
+
+# ── 3. Retry queue ────────────────────────────────────────────────────────────
+hdr "Retry Queue  (${QUEUE_FILE})"
+if [[ ! -f "${QUEUE_FILE}" ]]; then
+  ok "No queue file (nothing pending)"
+elif [[ ! -s "${QUEUE_FILE}" ]]; then
+  ok "Queue file empty (nothing pending)"
+else
+  QUEUE_COUNT="$(grep -c . "${QUEUE_FILE}" 2>/dev/null || echo 0)"
+  warn "${QUEUE_COUNT} file(s) waiting in retry queue:"
+  while IFS= read -r entry; do
+    echo -e "       ${DIM}${entry}${RESET}"
+  done < "${QUEUE_FILE}"
+  ISSUES=1
+fi
+
+# ── 4. Sync log (last 5 lines) ────────────────────────────────────────────────
+hdr "Sync Log  (last 5 lines of ${LOG_FILE})"
+if [[ ! -f "${LOG_FILE}" ]]; then
+  echo -e "  ${DIM}No log file found — note-sync has not run yet${RESET}"
+else
+  tail -5 "${LOG_FILE}" | while IFS= read -r line; do
+    echo -e "  ${DIM}${line}${RESET}"
+  done
+fi
+
+# ── Footer ────────────────────────────────────────────────────────────────────
+echo ""
+if [[ "${ISSUES}" -eq 0 ]]; then
+  echo -e "  ${GREEN}${BOLD}All good — notes are in sync.${RESET}"
+else
+  echo -e "  ${RED}${BOLD}Issues found — see warnings above.${RESET}"
+fi
+echo ""
+
+exit "${ISSUES}"

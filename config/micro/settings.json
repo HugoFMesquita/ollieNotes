@@ -1,0 +1,9 @@
+{
+  "linenumbers": false,
+  "wordwrap": true,
+  "keymenu": false,
+  "savecursor": true,
+  "statusline": false,
+  "infobar": false,
+  "colorscheme": "catppuccin-mocha"
+}

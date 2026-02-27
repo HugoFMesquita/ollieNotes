@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# note-setup-github — one-time setup: init ~/Notes as a git repo and push to a
+#                     private GitHub "Notes" repo. Safe to re-run (idempotent).
+
+set -uo pipefail
+
+NOTES_DIR="${HOME}/Notes"
+REPO_NAME="Notes"
+GITIGNORE="${NOTES_DIR}/.gitignore"
+
+# ── Colour helpers ────────────────────────────────────────────────────────────
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; RESET='\033[0m'
+ok()   { echo -e "${GREEN}  ✔${RESET}  $*"; }
+info() { echo -e "${YELLOW}  ·${RESET}  $*"; }
+err()  { echo -e "${RED}  ✖${RESET}  $*" >&2; }
+
+# ── 1. Pre-flight checks ──────────────────────────────────────────────────────
+echo ""
+echo "  note-setup-github"
+echo "  ─────────────────────────────────────────"
+
+# git
+if ! command -v git &>/dev/null; then
+  err "git is not installed. Install it and retry."
+  exit 1
+fi
+ok "git found: $(git --version)"
+
+# gh
+if ! command -v gh &>/dev/null; then
+  err "GitHub CLI (gh) is not installed."
+  err "Install: https://cli.github.com"
+  exit 1
+fi
+ok "gh found: $(gh --version | head -1)"
+
+# gh auth
+if ! gh auth status &>/dev/null; then
+  err "gh is not authenticated. Run:  gh auth login"
+  exit 1
+fi
+GH_USER="$(gh api user --jq .login 2>/dev/null)"
+ok "gh authenticated as: ${GH_USER}"
+
+# ── 2. Ensure ~/Notes exists ──────────────────────────────────────────────────
+mkdir -p "${NOTES_DIR}"
+ok "Notes directory: ${NOTES_DIR}"
+
+# ── 3. Write .gitignore (before any git add) ──────────────────────────────────
+GITIGNORE_ENTRY=".new-note-*.md"
+if [[ ! -f "${GITIGNORE}" ]]; then
+  printf '%s\n' "${GITIGNORE_ENTRY}" > "${GITIGNORE}"
+  ok ".gitignore created (excludes temp notes)"
+elif grep -qxF "${GITIGNORE_ENTRY}" "${GITIGNORE}"; then
+  info ".gitignore already contains '${GITIGNORE_ENTRY}' — skipping"
+else
+  printf '\n%s\n' "${GITIGNORE_ENTRY}" >> "${GITIGNORE}"
+  ok ".gitignore updated with '${GITIGNORE_ENTRY}'"
+fi
+
+# ── 4. Init git repo (idempotent) ─────────────────────────────────────────────
+if git -C "${NOTES_DIR}" rev-parse --git-dir &>/dev/null; then
+  info "Git repo already initialised — skipping git init"
+else
+  git init -b main "${NOTES_DIR}"
+  ok "Git repo initialised (branch: main)"
+fi
+
+# Ensure we're on main (handle pre-existing repos on master / other branch)
+CURRENT_BRANCH="$(git -C "${NOTES_DIR}" branch --show-current 2>/dev/null)"
+if [[ "${CURRENT_BRANCH}" != "main" ]]; then
+  git -C "${NOTES_DIR}" checkout -b main 2>/dev/null \
+    || git -C "${NOTES_DIR}" checkout main
+  ok "Switched to branch: main"
+else
+  info "Already on branch: main"
+fi
+
+# ── 5. Configure git identity if not set ─────────────────────────────────────
+if [[ -z "$(git -C "${NOTES_DIR}" config user.email)" ]]; then
+  GH_EMAIL="$(gh api user/emails --jq '[.[] | select(.primary)][0].email' 2>/dev/null || true)"
+  GH_NAME="$(gh api user --jq .name 2>/dev/null || true)"
+  if [[ -n "${GH_EMAIL}" ]]; then
+    git -C "${NOTES_DIR}" config user.email "${GH_EMAIL}"
+    git -C "${NOTES_DIR}" config user.name  "${GH_NAME:-${GH_USER}}"
+    ok "Git identity set: ${GH_NAME:-${GH_USER}} <${GH_EMAIL}>"
+  else
+    info "Could not fetch GitHub email — using global git identity"
+  fi
+else
+  info "Git identity already configured — skipping"
+fi
+
+# ── 6. Initial commit (if anything to commit) ─────────────────────────────────
+git -C "${NOTES_DIR}" add -A
+
+if git -C "${NOTES_DIR}" diff --cached --quiet; then
+  info "Nothing to commit — working tree clean"
+else
+  git -C "${NOTES_DIR}" commit -m "chore: initial notes sync"
+  ok "Initial commit created"
+fi
+
+# ── 7. Create / connect GitHub remote ─────────────────────────────────────────
+REMOTE_URL="$(git -C "${NOTES_DIR}" remote get-url origin 2>/dev/null || true)"
+
+if [[ -n "${REMOTE_URL}" ]]; then
+  info "Remote 'origin' already set: ${REMOTE_URL}"
+else
+  # Check if the GitHub repo already exists
+  if gh repo view "${GH_USER}/${REPO_NAME}" &>/dev/null; then
+    info "GitHub repo '${GH_USER}/${REPO_NAME}' already exists — adding remote"
+    git -C "${NOTES_DIR}" remote add origin \
+      "https://github.com/${GH_USER}/${REPO_NAME}.git"
+    ok "Remote 'origin' added"
+  else
+    info "Creating private GitHub repo '${REPO_NAME}'…"
+    # --source / --push flags handle remote+push in one step
+    if gh repo create "${REPO_NAME}" \
+        --private \
+        --source "${NOTES_DIR}" \
+        --remote origin \
+        --push 2>&1; then
+      ok "GitHub repo created and pushed: https://github.com/${GH_USER}/${REPO_NAME}"
+      # Remote was set and pushed; skip the explicit push below
+      echo ""
+      echo "  ─────────────────────────────────────────"
+      ok "Setup complete!"
+      echo ""
+      exit 0
+    else
+      err "gh repo create failed."
+      err "Check your GitHub permissions or network, then retry."
+      exit 1
+    fi
+  fi
+fi
+
+# ── 8. Push to origin (if remote was pre-existing or added manually) ──────────
+git -C "${NOTES_DIR}" push --set-upstream origin main 2>&1 \
+  && ok "Pushed to origin/main" \
+  || {
+    err "Push failed. The remote may have diverged or require a pull first."
+    err "Try:  git -C ~/Notes pull --rebase origin main  then re-run this script."
+    exit 1
+  }
+
+echo ""
+echo "  ─────────────────────────────────────────"
+ok "Setup complete!  https://github.com/${GH_USER}/${REPO_NAME}"
+echo ""

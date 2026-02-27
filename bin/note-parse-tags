@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# note-parse-tags — extract #hashtags from note body and update frontmatter tags:
+# Usage: note-parse-tags <filepath>
+
+FILEPATH="$1"
+[[ -z "${FILEPATH}" || ! -f "${FILEPATH}" ]] && exit 1
+
+# Find where the frontmatter ends (second "---" line)
+FM_END="$(grep -n '^---' "${FILEPATH}" | sed -n '2p' | cut -d: -f1)"
+
+# If no frontmatter, nothing to do
+[[ -z "${FM_END}" ]] && exit 0
+
+# Extract body (everything after frontmatter)
+BODY="$(tail -n +"$((FM_END + 1))" "${FILEPATH}")"
+
+# Parse #hashtags from body: tag is letters/digits/hyphens/underscores
+# Strip leading markdown heading markers (# ## ### etc.) so we don't pick up heading words,
+# but keep the rest of each line so inline #tags on heading lines are still captured.
+TAGS="$(echo "${BODY}" \
+  | sed 's/^#\+[[:space:]]\+//' \
+  | grep -oE '(^|[[:space:]]|[^&])#[a-zA-Z][a-zA-Z0-9_-]*' \
+  | grep -oE '#[a-zA-Z][a-zA-Z0-9_-]*' \
+  | sed 's/^#//' \
+  | sort -u)"
+
+# Build YAML list: [tag1, tag2] or []
+if [[ -z "${TAGS}" ]]; then
+  YAML_TAGS="[]"
+else
+  YAML_TAGS="[$(echo "${TAGS}" | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g')]"
+fi
+
+# Replace the tags: line in frontmatter
+sed -i "s/^tags:.*/tags: ${YAML_TAGS}/" "${FILEPATH}"

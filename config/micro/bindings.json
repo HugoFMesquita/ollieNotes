@@ -1,0 +1,5 @@
+{
+  "CtrlS":    "Save,Quit",
+  "CtrlAltO": "command:openNote",
+  "CtrlAltN": "command:newNote"
+}
