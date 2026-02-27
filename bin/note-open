@@ -53,14 +53,14 @@ SELECTED="$(echo "${NOTES}" \
       --no-multi \
       --with-nth=1,2 \
       --delimiter='\t' \
-      --preview='bat --style=plain --color=always --language=md {2}' \
+      --preview='bat --style=plain --color=always --language=md {3}' \
       --preview-window='right:55%:wrap' \
-      --bind "ctrl-d:execute(${SCRIPT_DIR}/note-delete {2})+reload(bash -c \"$(declare -f get_notes); get_notes | awk -F$'\\t' '{printf \\\"%-45s  \\\\033[2m%s\\\\033[0m\\\\t%s\\\\n\\\", \$1, \$2, \$3}'\")" \
+      --bind "ctrl-d:execute(${SCRIPT_DIR}/note-delete {3})+reload(bash -c \"$(declare -f get_notes); get_notes | awk -F$'\\t' '{printf \\\"%-45s  \\\\033[2m%s\\\\033[0m\\\\t%s\\\\n\\\", \$1, \$2, \$3}'\")" \
       --header="  enter:open  ctrl-d:delete  esc:quit" \
 )"
 
 # Extract filepath (second tab-field)
-FILEPATH="$(echo "${SELECTED}" | awk -F'\t' '{print $2}' | xargs)"
+FILEPATH="$(echo "${SELECTED}" | awk -F'\t' '{print $3}' | xargs)"
 
 [[ -z "${FILEPATH}" ]] && exit 0
 
