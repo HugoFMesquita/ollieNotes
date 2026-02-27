@@ -49,5 +49,6 @@ MICRO_CONFIG_HOME="${MICRO_CONFIG_HOME}" \
 # Parse #hashtags from body into frontmatter tags:
 "${SCRIPT_DIR}/note-parse-tags" "${FILEPATH}"
 
-# Sync to git in the background (must not inherit set -e):
-"${SCRIPT_DIR}/note-sync" "${FILEPATH}" &
+# Sync to git in the background — setsid detaches from micro's terminal session
+# so the process isn't killed when RunInteractiveShell returns control to micro.
+setsid "${SCRIPT_DIR}/note-sync" "${FILEPATH}" &

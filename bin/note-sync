@@ -47,15 +47,19 @@ notify() {
   fi
 }
 
+# ── early log: first action — confirms the process was actually invoked ───────
+printf '[%s] INFO: note-sync invoked (pid %s) filepath=%s\n' \
+  "$(date +'%Y-%m-%d %H:%M:%S')" "$$" "${1:-<none>}" >> "${LOG_FILE}"
+
+# ── redirect all subsequent stdout/stderr to log ──────────────────────────────
+exec >> "${LOG_FILE}" 2>&1
+
 # ── guard: ~/Notes must be a git repo ─────────────────────────────────────────
 if ! git -C "${NOTES_DIR}" rev-parse --git-dir &>/dev/null; then
   log "ERROR: ${NOTES_DIR} is not a git repository. Run note-setup-github first."
   notify "Notes sync error" "${NOTES_DIR} is not a git repo."
   exit 1
 fi
-
-# ── redirect all subsequent stdout/stderr to log ──────────────────────────────
-exec >> "${LOG_FILE}" 2>&1
 
 # ── lockfile: prevent concurrent syncs ────────────────────────────────────────
 if [[ -f "${LOCK_FILE}" ]]; then
