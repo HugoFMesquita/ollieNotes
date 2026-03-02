@@ -34,6 +34,8 @@ end
 
 function previewNote(bp)
   local bin = binDir() .. "/note-preview"
-  -- os.execute with & fully detaches the process from micro
-  os.execute(bin .. " " .. bp.Buf.Path .. " &")
+  local filepath = bp.Buf.AbsPath
+  -- nohup + redirects + & fully detach the preview from micro's terminal
+  os.execute("nohup " .. bin .. " '" .. filepath .. "' >/dev/null 2>&1 &")
+  micro.InfoBar():Message("Opening preview…")
 end

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # note-preview — open current note as a rendered Markdown preview in the browser
-# Uses grip to render GitHub-flavored Markdown (images included).
+# Uses grip to render GitHub-flavored Markdown.
 # Usage: note-preview <filepath>
 
 FILEPATH="$1"
@@ -18,6 +18,13 @@ fi
 # Pick a random free port so multiple previews don't collide
 PORT=$(shuf -i 6400-6500 -n 1)
 
-# Open the browser first (tiny delay to let grip start), then launch grip
-(sleep 0.8 && xdg-open "http://localhost:${PORT}") &
-grip "${FILEPATH}" "${PORT}" --quiet
+# Start grip as a background server, then open the browser
+grip "${FILEPATH}" "${PORT}" --quiet &
+GRIP_PID=$!
+
+# Wait briefly for grip to start listening, then open browser
+sleep 1
+xdg-open "http://localhost:${PORT}" 2>/dev/null
+
+# Keep grip alive until it's manually killed or the port is freed
+wait "${GRIP_PID}"
