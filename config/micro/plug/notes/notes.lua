@@ -1,7 +1,7 @@
 -- notes.lua — keybinding plugin for the note-taking workflow
--- Ctrl+Alt+O   →  open/browse notes via note-open (fzf picker)
--- Ctrl+Alt+N   →  create a new note via note
--- Ctrl+Alt+P   →  preview current note in browser via grip
+-- Alt+O        →  open/browse notes via note-open (fzf picker)
+-- Alt+N        →  create a new note via note
+-- Alt+P        →  preview current note in browser via grip
 
 local micro = import("micro")
 local shell = import("micro/shell")
@@ -17,9 +17,9 @@ function init()
   config.MakeCommand("newNote",     newNote,     config.NoComplete)
   config.MakeCommand("previewNote", previewNote, config.NoComplete)
 
-  config.TryBindKey("CtrlAltO",   "command:openNote",    true)
-  config.TryBindKey("CtrlAltN",   "command:newNote",     true)
-  config.TryBindKey("CtrlAltP",   "command:previewNote", true)
+  config.TryBindKey("Alt-o",      "command:openNote",    true)
+  config.TryBindKey("Alt-n",      "command:newNote",     true)
+  config.TryBindKey("Alt-p",      "command:previewNote", true)
 end
 
 function openNote(bp)
