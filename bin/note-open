@@ -44,7 +44,7 @@ TODAY="$(LC_TIME=C date +'%Y-%m-%d %a %H:%M')"
 sed -i "s/^updated:.*/updated: ${TODAY}/" "${FILEPATH}"
 
 MICRO_CONFIG_HOME="${MICRO_CONFIG_HOME}" \
-  micro -ruler false -wordwrap true "${FILEPATH}"
+  micro -ruler false -softwrap true -wordwrap true "${FILEPATH}"
 
 # Parse #hashtags from body into frontmatter tags:
 "${SCRIPT_DIR}/note-parse-tags" "${FILEPATH}"

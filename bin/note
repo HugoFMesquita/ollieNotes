@@ -25,7 +25,7 @@ sed -i "s/CREATED_DATE/${NOW}/; s/UPDATED_DATE/${NOW}/" "${TMPFILE}"
 
 # Open in micro — +7:3 places cursor after "# " on the H1 line
 MICRO_CONFIG_HOME="${MICRO_CONFIG_HOME}" \
-  micro -ruler false -wordwrap true +7:3 "${TMPFILE}"
+  micro -ruler false -softwrap true -wordwrap true +7:3 "${TMPFILE}"
 
 # --- Post-close: parse #hashtags from body into frontmatter ---
 "${SCRIPT_DIR}/note-parse-tags" "${TMPFILE}"
