@@ -2,5 +2,5 @@
   "CtrlS":    "Save,Quit",
   "CtrlAltO": "command:openNote",
   "CtrlAltN": "command:newNote",
-  "CtrlShiftP": "command:previewNote"
+  "CtrlAltP": "command:previewNote"
 }
