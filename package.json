@@ -5,15 +5,10 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "pi":"pi"
+    "pi": "pi"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
-  "devDependencies": {
-    "@mariozechner/pi-coding-agent": "^0.55.1"
-  }
+  "type": "commonjs"
 }
-
-
