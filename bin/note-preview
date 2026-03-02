@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# note-preview — open current note as a rendered Markdown preview in the browser
+# Uses grip to render GitHub-flavored Markdown (images included).
+# Usage: note-preview <filepath>
+
+FILEPATH="$1"
+
+if [[ -z "${FILEPATH}" || ! -f "${FILEPATH}" ]]; then
+  notify-send --app-name="Notes" "Preview failed" "No file to preview." 2>/dev/null
+  exit 1
+fi
+
+if ! command -v grip &>/dev/null; then
+  notify-send --app-name="Notes" "Preview failed" "grip is not installed. Run: pipx install grip" 2>/dev/null
+  exit 1
+fi
+
+# Pick a random free port so multiple previews don't collide
+PORT=$(shuf -i 6400-6500 -n 1)
+
+# Open the browser first (tiny delay to let grip start), then launch grip
+(sleep 0.8 && xdg-open "http://localhost:${PORT}") &
+grip "${FILEPATH}" "${PORT}" --quiet
