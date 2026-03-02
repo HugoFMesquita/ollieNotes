@@ -11,5 +11,5 @@ if [[ "${confirm}" == [yY] ]]; then
   rm -f "${FILEPATH}"
   # Sync deletion to GitHub — no filepath arg triggers a general sweep (git add -A)
   # which picks up the removal. setsid detaches from the caller's terminal session.
-  (setsid "${SCRIPT_DIR}/note-sync" </dev/null &)
+  "${SCRIPT_DIR}/note-sync"
 fi

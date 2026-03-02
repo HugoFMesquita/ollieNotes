@@ -65,5 +65,5 @@ if [[ -z "${CONTENT}" ]]; then
   rm -f "${TMPFILE}"
 else
   mv "${TMPFILE}" "${FINAL_PATH}"
-  (setsid "${SCRIPT_DIR}/note-sync" "${FINAL_PATH}" </dev/null &)
+  "${SCRIPT_DIR}/note-sync" "${FINAL_PATH}"
 fi
