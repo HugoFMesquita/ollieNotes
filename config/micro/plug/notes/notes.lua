@@ -34,6 +34,6 @@ end
 
 function previewNote(bp)
   local bin = binDir() .. "/note-preview"
-  -- RunBackgroundShell: runs without taking over the terminal
-  shell.RunBackgroundShell(bin .. " " .. bp.Buf.Path)
+  -- os.execute with & fully detaches the process from micro
+  os.execute(bin .. " " .. bp.Buf.Path .. " &")
 end
